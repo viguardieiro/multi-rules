@@ -17,253 +17,59 @@ In the original paper, a single bias B is applied to all instruction tokens. Our
 - Different bias values for each subset
 - Flexible combination of biases when tokens belong to multiple subsets
 
-## Extension: Multi-Subset Boosting
-
 ### Key Features
 
 1. **Multiple Token Subsets**: Specify different groups of tokens to boost (e.g., instructions, examples, constraints)
 2. **Per-Subset Bias Parameters**: Each subset can have its own bias value B_i
-3. **Flexible Combination**: Handle overlapping subsets with configurable combination strategies (sum, max, average)
-4. **Model Agnostic**: Works with any HuggingFace transformer model
-
-### Mathematical Formulation
-
-For a given attention head with pre-softmax scores S_ij:
-
-```
-S'_ij = S_ij + Σ(B_k · mask_k[j])
-```
-
-Where:
-- `S_ij`: Original attention score from query i to key j
-- `B_k`: Bias parameter for subset k
-- `mask_k[j]`: Binary indicator (1 if token j is in subset k, 0 otherwise)
-- `S'_ij`: Modified attention score
-
-After applying biases, the standard attention computation continues:
-```
-A' = Softmax(S')
-output = A' · V
-```
+3. **Generation-Time Boosting**: Bias is applied during both prefill AND autoregressive decoding
+4. **Reasoning Model Support**: Works with reasoning models like `openai/gpt-oss-20b`
+5. **Model Agnostic**: Works with any HuggingFace transformer model
 
 ## Project Structure
 
 ```
-multi_rules/
+multi-rules/
 ├── README.md                          # This file
 ├── requirements.txt                   # Python dependencies
 ├── src/
 │   ├── __init__.py
 │   ├── attention_hook.py             # Core attention modification logic
 │   ├── boost_config.py               # Configuration classes for boosting
-│   ├── token_utils.py                # Token manipulation and substring finding
-│   └── visualization.py              # Visualization and analysis tools
+│   └── token_utils.py                # Token manipulation and substring finding
 ├── notebooks/
-│   ├── 01_basic_usage.ipynb         # Basic usage examples
-│   ├── 02_single_vs_multi_boost.ipynb  # Compare single vs multi-subset
-│   ├── 03_bias_analysis.ipynb       # Analyze effects of different bias values
-│   └── 04_gpt_oss_experiments.ipynb # Experiments with openai/gpt-oss-20b
+│   ├── 01_basic_usage.ipynb          # Basic usage with GPT-2
+│   └── 02_gpt_oss_20b.ipynb          # Experiments with reasoning model
 └── tests/
-    ├── test_attention_hook.py
-    ├── test_token_utils.py
-    └── test_boost_config.py
+    ├── __init__.py
+    ├── test_boost_config.py          # Configuration validation tests
+    └── test_token_utils.py           # Token utility tests
 ```
 
-## Implementation Plan
+## Quick Start
 
-### Phase 1: Core Implementation (src/)
+### Installation
 
-#### 1.1 `boost_config.py`
-Configuration data structures:
-- `TokenSubset` dataclass: Defines a subset of tokens with indices and bias parameter
-  - `name`: str (e.g., "instruction")
-  - `indices`: List[int] (absolute token positions)
-  - `bias`: float (B value to add)
-- `BoostConfig` dataclass: Manages multiple token subsets
-  - `subsets`: List[TokenSubset]
-  - `layers`: Optional[List[int]] (None = all layers)
-  - `heads`: Optional[List[int]] (None = all heads)
-  - `combination`: str = "sum"
-- Validation logic for configuration parameters
+```bash
+pip install -r requirements.txt
+```
 
-#### 1.2 `attention_hook.py`
-Core hooking functionality:
-- `apply_attention_bias(attn_scores, bias_mask)`: Modify attention scores with bias mask
-- `create_bias_mask(token_subsets, seq_length)`: Generate bias mask from token subsets (with summing for overlaps)
-- `register_boost_hooks(model, config)`: Register hooks on model's attention layers
-  - Returns handle for cleanup
-  - Handles different model architectures (GPT-2, GPT-Neo, LLaMA, etc.)
-- `unregister_boost_hooks(model, handle)`: Remove hooks from model
-- `update_boost_config(handle, new_config)`: Update configuration dynamically during generation
-
-#### 1.3 `token_utils.py`
-Token manipulation utilities:
-- `find_substring_token_indices(text, substring, tokenizer)`: Find token indices for a substring
-  - Validates substring is present in text
-  - Returns List[int] of token indices
-  - Raises ValueError if substring not found
-  - Handles tokenization edge cases (e.g., BPE splits)
-- `validate_token_indices(indices, max_length)`: Ensure indices are valid
-- `create_token_subset_from_substring(name, text, substring, tokenizer, bias)`: Convenience function
-  - Combines substring finding and TokenSubset creation
-
-#### 1.4 `visualization.py`
-Analysis and visualization:
-- `visualize_attention()`: Visualize attention patterns with/without boosting
-- `plot_bias_mask()`: Visualize the bias mask applied to tokens
-- `compare_outputs()`: Compare generations with different boost configurations
-- `attention_analysis()`: Analyze how attention changes with boosting
-
-### Phase 2: Testing & Validation
-
-#### 2.1 Unit Tests
-- Test bias mask generation with various configurations
-- Test attention modification correctness
-- Test model wrapper functionality
-- Edge cases: empty subsets, overlapping indices, out-of-range indices
-
-#### 2.2 Integration Tests
-- End-to-end generation with boosting
-- Verify attention scores are modified correctly
-- Test with different model architectures
-
-### Phase 3: Experiments (notebooks/)
-
-#### 3.1 Basic Usage (`01_basic_usage.ipynb`)
-- Load a small model (e.g., GPT-2)
-- Define simple instruction + query
-- Apply boosting to instruction tokens
-- Compare outputs with and without boosting
-
-#### 3.2 Single vs Multi-Subset (`02_single_vs_multi_boost.ipynb`)
-- Compare original InstABoost (single subset) vs multi-subset
-- Scenarios:
-  - Instruction + examples (different biases)
-  - Instruction + constraints + context
-  - Hierarchical instructions
-
-#### 3.3 Bias Analysis (`03_bias_analysis.ipynb`)
-- Sweep bias values for different subsets
-- Measure:
-  - Instruction following accuracy
-  - Output quality (fluency, relevance)
-  - Attention distribution changes
-- Find optimal bias ranges
-
-#### 3.4 GPT-OSS-20B Experiments (`04_gpt_oss_experiments.ipynb`)
-- Load openai/gpt-oss-20b model
-- Real-world instruction following tasks
-- Compare against baselines:
-  - No boosting
-  - Original InstABoost
-  - Multi-subset InstABoost
-- Measure performance on standard benchmarks
-
-### Phase 4: Documentation & Examples
-
-- API documentation
-- Usage examples for common scenarios
-- Best practices guide
-- Performance considerations
-
-## Technical Considerations
-
-### 1. Model Compatibility
-- Identify attention layer patterns in HuggingFace models
-- Handle different attention implementations:
-  - GPT-2/GPT-Neo: `attn.c_attn` or similar
-  - LLaMA: `self_attn.q_proj`, `self_attn.k_proj`
-  - Generic: Auto-detect attention modules
-- Support both encoder-decoder and decoder-only architectures
-- Handle different attention score formats (some models use different shapes)
-
-### 2. Substring-to-Index Mapping
-- Tokenization challenges:
-  - BPE tokenizers may split substrings unexpectedly
-  - Need to handle whitespace and special tokens carefully
-  - Verify substring tokens match exactly in the tokenized sequence
-- Algorithm:
-  1. Tokenize full text and substring separately
-  2. Find substring token sequence in full token sequence
-  3. Return start and end indices
-  4. Validate match is exact (raise error if not found)
-- Edge cases:
-  - Substring appears multiple times (return first occurrence or all?)
-  - Substring not found (raise clear error)
-  - Empty substring (validation error)
-
-### 3. Efficiency
-- Minimize overhead of hook execution
-- Efficient bias mask computation:
-  - Pre-compute mask once, cache for reuse
-  - Only recompute when configuration changes
-  - Use sparse representations for memory efficiency
-- Handle long sequences (e.g., 8k+ tokens)
-
-### 4. Dynamic Configuration
-- Support changing boost config during generation
-- Callback mechanism: user provides function `f(step, tokens) -> BoostConfig`
-- Efficiently update hooks without full re-registration
-- Handle stateful boost strategies (e.g., gradually decrease bias)
-
-### 5. Debugging & Analysis
-- Logging of attention modifications
-- Visualization tools for attention patterns
-- Export attention scores before/after boosting
-- Metrics for measuring boosting effectiveness
-
-## Usage Example (Preview)
-
-### Basic Usage with Manual Indices
+### Basic Usage
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from src.attention_hook import register_boost_hooks, unregister_boost_hooks
-from src.boost_config import TokenSubset, BoostConfig
+from src.boost_config import BoostConfig
+from src.token_utils import create_token_subset_from_substring
+from src.attention_hook import register_boost_hooks, unregister_boost_hooks, update_bias_mask
 
-# Load model normally
-model = AutoModelForCausalLM.from_pretrained("openai/gpt-oss-20b")
-tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b")
+# Load model
+model = AutoModelForCausalLM.from_pretrained("gpt2")
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
 # Prepare input
 text = "Instruction: Answer in French. Question: What is the capital of France?"
 input_ids = tokenizer(text, return_tensors="pt").input_ids
 
-# Define token subsets manually (if you know the indices)
-subsets = [
-    TokenSubset(name="instruction", indices=[0, 1, 2, 3, 4], bias=2.0),
-    TokenSubset(name="question", indices=[5, 6, 7, 8, 9, 10], bias=1.0)
-]
-config = BoostConfig(subsets=subsets)
-
-# Register hooks
-handle = register_boost_hooks(model, config)
-
-# Generate with boosting
-output = model.generate(input_ids, max_length=50)
-decoded = tokenizer.decode(output[0])
-print(decoded)
-
-# Clean up
-unregister_boost_hooks(model, handle)
-```
-
-### Using Substring-to-Indices Helper
-
-```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from src.attention_hook import register_boost_hooks, unregister_boost_hooks
-from src.token_utils import create_token_subset_from_substring
-from src.boost_config import BoostConfig
-
-# Load model
-model = AutoModelForCausalLM.from_pretrained("openai/gpt-oss-20b")
-tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b")
-
-# Prepare input
-text = "Instruction: Answer in French. Question: What is the capital of France?"
-
-# Create token subsets from substrings (automatic index finding)
+# Create token subset from substring (automatic index finding)
 instruction_subset = create_token_subset_from_substring(
     name="instruction",
     text=text,
@@ -272,87 +78,188 @@ instruction_subset = create_token_subset_from_substring(
     bias=2.0
 )
 
-question_subset = create_token_subset_from_substring(
-    name="question",
-    text=text,
-    substring="Question: What is the capital of France?",
-    tokenizer=tokenizer,
-    bias=1.0
-)
+# Create configuration and register hooks
+config = BoostConfig(subsets=[instruction_subset])
+handle = register_boost_hooks(model, config, input_length=input_ids.shape[1])
+update_bias_mask(handle, seq_length=input_ids.shape[1])
 
-# Create configuration
-config = BoostConfig(subsets=[instruction_subset, question_subset])
-
-# Tokenize after creating subsets
-input_ids = tokenizer(text, return_tensors="pt").input_ids
-
-# Register and generate
-handle = register_boost_hooks(model, config)
+# Generate with boosting
 output = model.generate(input_ids, max_length=50)
 print(tokenizer.decode(output[0]))
 
-unregister_boost_hooks(model, handle)
+# Clean up
+unregister_boost_hooks(handle)
 ```
 
-### Dynamic Configuration During Generation
+### Usage with Reasoning Models (GPT-OSS-20B)
 
 ```python
-# For changing boost config during generation, we'll provide a callback mechanism
-from src.attention_hook import register_dynamic_boost_hooks
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from src.boost_config import BoostConfig
+from src.token_utils import create_token_subset_from_substring
+from src.attention_hook import register_boost_hooks, unregister_boost_hooks, update_bias_mask
 
-def boost_config_callback(step, tokens):
-    """Called at each generation step to get boost configuration"""
-    if step < 5:  # First 5 tokens: boost instruction heavily
-        return BoostConfig(subsets=[TokenSubset("inst", [0, 1, 2, 3], bias=3.0)])
-    else:  # After that: lighter boosting
-        return BoostConfig(subsets=[TokenSubset("inst", [0, 1, 2, 3], bias=1.0)])
+# Load reasoning model
+model = AutoModelForCausalLM.from_pretrained(
+    "openai/gpt-oss-20b",
+    trust_remote_code=True,
+    device_map="auto",
+    torch_dtype=torch.bfloat16
+)
+tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b", trust_remote_code=True)
 
-handle = register_dynamic_boost_hooks(model, boost_config_callback)
-output = model.generate(input_ids, max_length=50)
-unregister_boost_hooks(model, handle)
+# Use chat template for reasoning models
+messages = [{"role": "user", "content": "Respond only in Spanish: What is 2 + 2?"}]
+formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+input_ids = tokenizer(formatted_prompt, return_tensors="pt").input_ids.to("cuda")
+
+# Boost the instruction (use bias=2.0 for reasoning models)
+subset = create_token_subset_from_substring(
+    "instruction", formatted_prompt, "Respond only in Spanish", tokenizer, bias=2.0
+)
+config = BoostConfig(subsets=[subset])
+
+handle = register_boost_hooks(model, config, input_length=input_ids.shape[1])
+update_bias_mask(handle, seq_length=input_ids.shape[1], device=input_ids.device)
+
+output = model.generate(input_ids, max_new_tokens=100)
+print(tokenizer.decode(output[0][input_ids.shape[1]:]))
+
+unregister_boost_hooks(handle)
 ```
 
-## Roadmap
+## Optimal Bias Values
 
-- [x] Project setup and structure
-- [ ] Phase 1: Core implementation
-  - [ ] boost_config.py (configuration dataclasses)
-  - [ ] attention_hook.py (hook registration and bias application)
-  - [ ] token_utils.py (substring-to-indices mapping)
-  - [ ] visualization.py (analysis and visualization tools)
-- [ ] Phase 2: Testing
-  - [ ] Unit tests for each module
-  - [ ] Integration tests with real models
-  - [ ] Test substring-to-indices edge cases
-- [ ] Phase 3: Experiments
-  - [ ] Basic usage notebook
-  - [ ] Single vs multi-subset comparison
-  - [ ] Bias sweep analysis
-  - [ ] GPT-OSS-20B experiments
-- [ ] Phase 4: Documentation
-  - [ ] API documentation
-  - [ ] Usage guides
-  - [ ] Performance analysis
+Based on experiments with `openai/gpt-oss-20b`:
+
+| Bias Value | Effect |
+|------------|--------|
+| **0.5 - 2.0** | Optimal range. Model focuses better on instructions |
+| **2.0** | Sweet spot for reasoning models |
+| **3.0 - 5.0** | Risk of repetition in reasoning phase |
+| **10.0+** | Severe degradation, nonsensical output |
+
+**Recommendation**: Start with `bias=2.0` and adjust based on results.
+
+## Key Findings with Reasoning Models
+
+1. **Reasoning Focus**: Boosted model's internal reasoning (`analysis` channel) explicitly mentions the instruction earlier and more prominently
+   - Baseline: *"The user asks:..."*
+   - Boosted: *"We need to answer in exactly 3 words..."*
+
+2. **Task Completion**: Boosted model more likely to reach final answer where baseline gets stuck in reasoning
+
+3. **Generation-Time Application**: Bias is applied during both prefill AND each decoding step, ensuring consistent instruction attention throughout generation
+
+## API Reference
+
+### `BoostConfig`
+
+Configuration for multi-subset boosting.
+
+```python
+from src.boost_config import TokenSubset, BoostConfig
+
+# Define token subsets
+subset1 = TokenSubset(name="instruction", indices=[0, 1, 2, 3], bias=2.0)
+subset2 = TokenSubset(name="examples", indices=[10, 11, 12], bias=1.0)
+
+# Create config
+config = BoostConfig(
+    subsets=[subset1, subset2],
+    layers=None,      # None = all layers (or list of layer indices)
+    heads=None,       # None = all heads (or list of head indices)
+    combination="sum" # How to combine overlapping biases
+)
+```
+
+### `create_token_subset_from_substring`
+
+Automatically find token indices for a substring.
+
+```python
+from src.token_utils import create_token_subset_from_substring
+
+subset = create_token_subset_from_substring(
+    name="instruction",
+    text="Full prompt text here",
+    substring="substring to boost",
+    tokenizer=tokenizer,
+    bias=2.0
+)
+```
+
+### Hook Management
+
+```python
+from src.attention_hook import register_boost_hooks, unregister_boost_hooks, update_bias_mask
+
+# Register hooks
+handle = register_boost_hooks(model, config, input_length=seq_len)
+
+# Update bias mask (required before generation)
+update_bias_mask(handle, seq_length=seq_len, device=device)
+
+# ... generate ...
+
+# Clean up
+unregister_boost_hooks(handle)
+```
+
+## Technical Details
+
+### How Bias is Applied During Generation
+
+The implementation handles both prefill and autoregressive decoding:
+
+1. **Prefill**: Attention shape `[batch, heads, seq_len, seq_len]` - bias applied directly
+2. **Decoding**: Attention shape `[batch, heads, 1, seq_len+t]` - bias padded with zeros for new tokens
+
+```
+Original input: [tok0, tok1, tok2]  with bias [2.0, 2.0, 0.0]
+After generating 2 tokens: [tok0, tok1, tok2, gen0, gen1]
+Padded bias: [2.0, 2.0, 0.0, 0.0, 0.0]
+```
+
+This ensures instruction tokens continue receiving boosted attention throughout generation.
+
+### Supported Model Architectures
+
+The implementation auto-detects attention modules by pattern matching:
+- GPT-2/GPT-Neo: `attn` modules
+- LLaMA/Mistral: `self_attn` modules
+- Generic: Any module with "attn" or "attention" in the name
+
+Excluded patterns (projection layers): `q_proj`, `k_proj`, `v_proj`, `out_proj`, `o_proj`, `c_proj`
+
+## Notebooks
+
+1. **`01_basic_usage.ipynb`**: Introduction with GPT-2, demonstrates basic boosting workflow
+2. **`02_gpt_oss_20b.ipynb`**: Experiments with OpenAI's reasoning model, includes bias value analysis
 
 ## Dependencies
 
 - PyTorch >= 2.0
 - Transformers >= 4.30.0
-- numpy
-- matplotlib (for visualization)
-- jupyter (for notebooks)
-- pytest (for testing)
+- NumPy >= 1.24.0
+- Jupyter (for notebooks)
+
+## Roadmap
+
+- [x] Core implementation
+  - [x] `boost_config.py` - Configuration dataclasses with validation
+  - [x] `attention_hook.py` - Hook registration and bias application
+  - [x] `token_utils.py` - Substring-to-indices mapping
+- [x] Generation-time bias application (not just prefill)
+- [x] Reasoning model support (`openai/gpt-oss-20b`)
+- [x] Basic usage notebook
+- [x] Reasoning model experiments notebook
+- [ ] Visualization tools for attention patterns
+- [ ] Benchmark suite for instruction following
+- [ ] Support for dynamic bias (changing during generation)
 
 ## References
 
 - Original InstABoost paper: "Instruction Following by Principled Attention Boosting of Large Language Models"
 - Implementation inspired by TransformerLens hooks and PASTA method
-
-## Design Decisions
-
-Based on requirements:
-
-1. **Bias Combination Strategy**: Sum all applicable biases when tokens belong to multiple subsets
-2. **Token Indexing**: Absolute positions in the input sequence, with utility functions to identify indices from substrings
-3. **Layer/Head Specificity**: Support applying to specific layers/heads, but default is all layers/all heads
-4. **Dynamic vs Static**: Support changing boost configuration during generation (e.g., different biases per generation step)

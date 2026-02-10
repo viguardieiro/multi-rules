@@ -98,9 +98,23 @@ def _create_patched_forward(original_forward, bias_mask: torch.Tensor, layer_idx
             if not bias_applied["applied"] and dim == -1:
                 # Check if this looks like attention scores
                 # Attention scores typically have shape [batch, heads, seq_q, seq_k]
-                if len(input_tensor.shape) >= 2 and input_tensor.size(-1) == bias_mask.size(0):
+                # During generation, seq_k grows as tokens are generated, so we check >=
+                seq_k = input_tensor.size(-1)
+                bias_len = bias_mask.size(0)
+                if len(input_tensor.shape) >= 2 and seq_k >= bias_len:
                     # Move bias to correct device/dtype
                     bias = bias_mask.to(device=input_tensor.device, dtype=input_tensor.dtype)
+
+                    # Pad bias with zeros for newly generated tokens
+                    # Only the original input tokens get the bias; new tokens get 0
+                    if seq_k > bias_len:
+                        padding = torch.zeros(
+                            seq_k - bias_len,
+                            device=input_tensor.device,
+                            dtype=input_tensor.dtype
+                        )
+                        bias = torch.cat([bias, padding], dim=0)
+
                     # Add bias before softmax: S' = S + bias
                     # Broadcasting handles batch and head dimensions automatically
                     input_tensor = input_tensor + bias
@@ -167,7 +181,7 @@ def register_boost_hooks(
         # Match attention module patterns
         if any(pattern in name_lower for pattern in attention_patterns):
             # Exclude projection sub-modules
-            if not any(proj in name_lower for proj in ["q_proj", "k_proj", "v_proj", "out_proj", "c_proj"]):
+            if not any(proj in name_lower for proj in ["q_proj", "k_proj", "v_proj", "out_proj", "o_proj", "c_proj"]):
                 attention_modules.append((name, module))
 
     if not attention_modules:
@@ -253,7 +267,7 @@ def update_bias_mask(
     for name, module in handle.model.named_modules():
         name_lower = name.lower()
         if any(pattern in name_lower for pattern in attention_patterns):
-            if not any(proj in name_lower for proj in ["q_proj", "k_proj", "v_proj", "out_proj", "c_proj"]):
+            if not any(proj in name_lower for proj in ["q_proj", "k_proj", "v_proj", "out_proj", "o_proj", "c_proj"]):
                 if name in handle.patched_modules:  # Only re-patch what we patched before
                     attention_modules.append((name, module))
 
