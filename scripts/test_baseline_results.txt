@@ -1,0 +1,155 @@
+`torch_dtype` is deprecated! Use `dtype` instead!
+MXFP4 quantization requires Triton and kernels installed: CUDA requires Triton >= 3.4.0, XPU requires Triton >= 3.5.0, we will default to dequantizing the model to bf16
+==========================================================================================
+Loading model...
+==========================================================================================
+Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:  33%|███▎      | 1/3 [00:01<00:02,  1.25s/it]Loading checkpoint shards:  67%|██████▋   | 2/3 [00:02<00:01,  1.29s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:03<00:00,  1.12s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:03<00:00,  1.16s/it]
+Model loaded on cuda:0
+==========================================================================================
+BASELINE INSTRUCTION-FOLLOWING TEST (No Boosting)
+==========================================================================================
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: 3 words
+Prompt: "Answer in exactly 3 words: What is the capital of France?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [HIT LIMIT]
+Reasoning: The user asks: "Answer in exactly 3 words: What is the capital of France?" They want a 3-word answer. The capital of France is Paris. But we need exactly 3 words. So we could say "Paris, France's capi...
+Final Answer: (none)
+Result: FAIL - No answer
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: 1 word
+Prompt: "Answer in exactly one word: What color is the sky?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [74 tokens]
+Reasoning: The user asks: "Answer in exactly one word: What color is the sky?" The answer should be a single word. The sky is typically blue. So answer: "Blue". Ensure exactly one word. No punctuation? They didn...
+Final Answer: Blue
+Result: PASS - Got 1 words: 'Blue'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: 5 words
+Prompt: "Answer in exactly 5 words: Why do birds fly?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [HIT LIMIT]
+Reasoning: The user wants an answer in exactly 5 words: "Why do birds fly?" So we need a 5-word answer. Could be "To escape predators, find food." That's 5 words? Let's count: To(1) escape(2) predators,(3) find(...
+Final Answer: (none)
+Result: FAIL - No answer
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: number only
+Prompt: "Reply with only a number: What is 15 + 27?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [36 tokens]
+Reasoning: The user asks: "Reply with only a number: What is 15 + 27?" So answer is 42.
+Final Answer: 42
+Result: PASS - Answer: '42'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: yes/no only
+Prompt: "Answer only yes or no: Is the Earth round?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [47 tokens]
+Reasoning: The user asks: "Answer only yes or no: Is the Earth round?" They want a yes or no answer. The correct answer: Yes. So respond with "Yes".
+Final Answer: Yes
+Result: PASS - Answer: 'Yes'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: ALL CAPS
+Prompt: "RESPOND IN ALL CAPITAL LETTERS: What is your name?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [56 tokens]
+Reasoning: The user says: "RESPOND IN ALL CAPITAL LETTERS: What is your name?" They want the assistant to respond in all caps. So answer: "I AM CHATGPT." In all caps.
+Final Answer: I AM CHATGPT.
+Result: PASS - Answer: 'I AM CHATGPT.'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: lowercase
+Prompt: "respond entirely in lowercase letters: What is the largest planet?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [52 tokens]
+Reasoning: The user wants the answer entirely in lowercase letters. So respond with "jupiter" or "the largest planet is jupiter". Must be all lowercase. Let's do that.
+Final Answer: the largest planet is jupiter.
+Result: PASS - Answer: 'the largest planet is jupiter.'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: start with Yes
+Prompt: "Start your response with 'Yes': Can dogs swim?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [235 tokens]
+Reasoning: The user says: "Start your response with 'Yes': Can dogs swim?" So they want a response that starts with "Yes". They ask: "Can dogs swim?" So we need to answer that question, starting with "Yes". The ...
+Final Answer: Yes, most dogs can swim, though their comfort and ability vary by breed, size, and individual temperament. Breeds with webbed feet or a water‑loving history—such as Labrador Retrievers, Newfoundlands, and Portuguese Water Dogs—often excel in the water. Smaller or less athletic dogs may need encouragement and training, and some breeds (like Bulldogs or Dachshunds) can struggle due to body shape or joint issues. Always supervise your dog, use a life vest for larger or inexperienced swimmers, and ensure the water is safe and free of hazards.
+Result: PASS - Answer: 'Yes, most dogs can swim, though their comfort and ...'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: end with period
+Prompt: "End your response with exactly one period: Name a fruit"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [89 tokens]
+Reasoning: The user says: "End your response with exactly one period: Name a fruit". They want me to name a fruit, and end the response with exactly one period. So I should output a fruit name, and end with a pe...
+Final Answer: Apple.
+Result: PASS - Answer: 'Apple.'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: no letter e
+Prompt: "Answer without using the letter 'e': What is 2+2?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [265 tokens]
+Reasoning: We need to answer without using the letter 'e'. The question: "Answer without using the letter 'e': What is 2+2?" So we must respond with a sentence that does not contain the letter 'e'. We need to an...
+Final Answer: four.
+Result: PASS - Contains 'e': False, answer: 'four.'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: include hello
+Prompt: "Include the word 'hello' in your response: What time is it?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [193 tokens]
+Reasoning: The user says: "Include the word 'hello' in your response: What time is it?" They want a response that includes the word 'hello' and presumably answer the question "What time is it?" We need to respon...
+Final Answer: hello! I’m sorry, but I don’t have real‑time access to the current time. Please check your phone, computer, or another clock to find out the exact time.
+Result: PASS - Contains 'hello': True, answer: 'hello! I’m sorry, but I don’t have real‑time access to the current time. Please check your phone, computer, or another clock to find out the exact time.'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: Spanish only
+Prompt: "Responde solo en español: What is 2 + 2?"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [59 tokens]
+Reasoning: The user says: "Responde solo en español: What is 2 + 2?" They want the answer in Spanish only. So respond in Spanish: "2 + 2 es 4."
+Final Answer: 2 + 2 es 4.
+Result: PASS - Answer: '2 + 2 es 4.'
+
+──────────────────────────────────────────────────────────────────────────────────────────
+TEST: 3 bullets
+Prompt: "Give exactly 3 bullet points: Name some colors"
+──────────────────────────────────────────────────────────────────────────────────────────
+Generation: [107 tokens]
+Reasoning: The user: "Give exactly 3 bullet points: Name some colors". They want exactly 3 bullet points, each presumably a color name. So we need to output exactly 3 bullet points. Use bullet points like "-". P...
+Final Answer: - Crimson  
+- Teal  
+- Amber
+Result: PASS - Got 3 bullets
+
+==========================================================================================
+SUMMARY
+==========================================================================================
+
+Overall: 11/13 passed (85%)
+Hit token limit: 2/13
+No final answer: 2/13
+
+Test                 Tokens     Final?   Result   Answer                             
+──────────────────────────────────────────────────────────────────────────────────────────
+3 words              600*       N        FAIL     (none)                             
+1 word               74         Y        PASS     Blue                               
+5 words              600*       N        FAIL     (none)                             
+number only          36         Y        PASS     42                                 
+yes/no only          47         Y        PASS     Yes                                
+ALL CAPS             56         Y        PASS     I AM CHATGPT.                      
+lowercase            52         Y        PASS     the largest planet is jupiter.     
+start with Yes       235        Y        PASS     Yes, most dogs can swim, though ...
+end with period      89         Y        PASS     Apple.                             
+no letter e          265        Y        PASS     four.                              
+include hello        193        Y        PASS     hello! I’m sorry, but I don’t ha...
+Spanish only         59         Y        PASS     2 + 2 es 4.                        
+3 bullets            107        Y        PASS     - Crimson  
+- Teal  
+- Amber       
