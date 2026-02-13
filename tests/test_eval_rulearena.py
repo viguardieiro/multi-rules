@@ -26,6 +26,7 @@ from scripts.eval_rulearena import (
     format_boost_metadata,
     save_run_config,
     save_samples_json,
+    append_sample_jsonl,
     save_summary_json,
     extract_sample_input,
     load_problems,
@@ -312,12 +313,13 @@ class TestConfigSerialization:
 
 
 # ===================================================================
-# Samples JSON
+# Samples JSONL
 # ===================================================================
 
-class TestSamplesJson:
-    def test_save_and_load(self, tmp_path):
-        samples = [
+class TestSamplesJsonl:
+    @pytest.fixture
+    def two_samples(self):
+        return [
             {
                 "sample_idx": 0,
                 "sample_input": "Alice flies to LAX",
@@ -347,17 +349,31 @@ class TestSamplesJson:
                 "boost_metadata": "No boosting (baseline)",
             },
         ]
-        save_samples_json(tmp_path, samples)
-        loaded = json.loads((tmp_path / "samples.json").read_text())
+
+    def _read_jsonl(self, path):
+        lines = path.read_text().strip().split("\n")
+        return [json.loads(line) for line in lines if line]
+
+    def test_save_and_load(self, tmp_path, two_samples):
+        save_samples_json(tmp_path, two_samples)
+        loaded = self._read_jsonl(tmp_path / "samples.jsonl")
         assert len(loaded) == 2
         assert loaded[0]["sample_idx"] == 0
         assert loaded[0]["is_correct"] is True
         assert loaded[1]["predicted_answer"] is None
 
+    def test_append_incremental(self, tmp_path, two_samples):
+        for sample in two_samples:
+            append_sample_jsonl(tmp_path, sample)
+        loaded = self._read_jsonl(tmp_path / "samples.jsonl")
+        assert len(loaded) == 2
+        assert loaded[0]["sample_idx"] == 0
+        assert loaded[1]["sample_idx"] == 1
+
     def test_creates_directory(self, tmp_path):
         nested = tmp_path / "x" / "y"
         save_samples_json(nested, [])
-        assert (nested / "samples.json").exists()
+        assert (nested / "samples.jsonl").exists()
 
 
 # ===================================================================

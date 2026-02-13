@@ -286,7 +286,11 @@ Calculate the tax owed by the payer step-by-step according to the information pr
 Your response:
 """
 
-DEFAULT_MAX_NEW_TOKENS = {"airline": 2000, "nba": 4000, "tax": 8000}
+# RuleArena default max new tokens (for API models, output only)
+# DEFAULT_MAX_NEW_TOKENS = {"airline": 4096, "nba": 4096, "tax": 8192}
+
+# Our default max new tokens (for local models, counting reasoning and output tokens)
+DEFAULT_MAX_NEW_TOKENS = {"airline": 16000, "nba": 16000, "tax": 16000}
 
 TBD_MARK = "[__]"
 
@@ -688,10 +692,29 @@ def extract_sample_input(domain: str, problem: dict) -> str:
 
 
 def save_samples_json(results_dir: Path, samples: list[dict]) -> None:
-    """Save per-sample results as a JSON list."""
+    """Save per-sample results as JSON Lines (one JSON object per line)."""
     results_dir.mkdir(parents=True, exist_ok=True)
-    with open(results_dir / "samples.json", "w") as f:
-        json.dump(samples, f, indent=2)
+    with open(results_dir / "samples.jsonl", "w") as f:
+        for sample in samples:
+            f.write(json.dumps(sample, cls=_NumpyEncoder) + "\n")
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """Handle numpy/torch types in JSON serialization."""
+    def default(self, obj):
+        import numpy as np
+        if isinstance(obj, np.generic):
+            return obj.item()
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
+def append_sample_jsonl(results_dir: Path, sample: dict) -> None:
+    """Append a single sample result to samples.jsonl."""
+    results_dir.mkdir(parents=True, exist_ok=True)
+    with open(results_dir / "samples.jsonl", "a") as f:
+        f.write(json.dumps(sample, cls=_NumpyEncoder) + "\n")
 
 
 def save_summary_json(results_dir: Path, config_dict: dict,
@@ -720,7 +743,7 @@ def save_summary_json(results_dir: Path, config_dict: dict,
         "timestamp": datetime.now().isoformat(),
     }
     with open(results_dir / "summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
+        json.dump(summary, f, indent=2, cls=_NumpyEncoder)
 
 
 
@@ -794,6 +817,11 @@ def main(argv=None):
     correct_count = 0
     total_count = len(problems)
     sample_results = []
+
+    # Clear samples file from any previous run in same directory
+    samples_path = results_dir / "samples.jsonl"
+    samples_path.parent.mkdir(parents=True, exist_ok=True)
+    samples_path.write_text("")
 
     wall_start = time.time()
 
@@ -871,8 +899,8 @@ def main(argv=None):
               f" | Running: {correct_count}/{done} ({acc_so_far:.1%})"
               f" | ETA: {eta_min}m{eta_sec:02d}s")
 
-        # Collect sample result
-        sample_results.append({
+        # Collect sample result and save incrementally
+        sample = {
             "sample_idx": idx,
             "sample_input": extract_sample_input(args.domain, problem),
             "predicted_answer": predicted,
@@ -881,16 +909,17 @@ def main(argv=None):
             "model_output": response,
             "generation_finished": generation_finished,
             "output_length_chars": len(response),
-            "input_length_tokens": input_length,
-            "output_length_tokens": output_length_tokens,
+            "input_length_tokens": int(input_length),
+            "output_length_tokens": int(output_length_tokens),
             "sample_time_seconds": round(sample_time, 2),
             "boost_metadata": boost_metadata,
-        })
+        }
+        sample_results.append(sample)
+        append_sample_jsonl(results_dir, sample)
 
     wall_time = time.time() - wall_start
 
-    # Save structured results
-    save_samples_json(results_dir, sample_results)
+    # Save aggregate summary
     save_summary_json(results_dir, config_dict, sample_results, wall_time)
 
     accuracy = correct_count / total_count if total_count > 0 else 0.0

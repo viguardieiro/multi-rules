@@ -267,7 +267,7 @@ Key flags: `--max_problems N` to limit samples, `--use_example` to include a few
 
 Each run saves to `results/rulearena/<model>/<domain>/comp_<N>/<run_id>/`:
 
-- **`samples.json`** — per-sample details (predicted/ground-truth answers, model output, timing, token counts, generation completion status)
+- **`samples.jsonl`** — per-sample details, one JSON object per line (predicted/ground-truth answers, model output, timing, token counts, generation completion status). Written incrementally during the run.
 - **`summary.json`** — aggregate metrics (accuracy, generation-finished ratio, avg output length, wall time)
 - **`config.json`** — run configuration
 
