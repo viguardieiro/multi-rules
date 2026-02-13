@@ -5,3 +5,5 @@ matplotlib>=3.7.0
 jupyter>=1.0.0
 pytest>=7.3.0
 accelerate>=0.20.0
+triton>=3.4.0
+kernels

@@ -29,20 +29,22 @@ In the original paper, a single bias B is applied to all instruction tokens. Our
 
 ```
 multi-rules/
-├── README.md                          # This file
-├── requirements.txt                   # Python dependencies
-├── src/
-│   ├── __init__.py
-│   ├── attention_hook.py             # Core attention modification logic
-│   ├── boost_config.py               # Configuration classes for boosting
-│   └── token_utils.py                # Token manipulation and substring finding
+├── src/                               # Core InstABoost implementation
+│   ├── attention_hook.py
+│   ├── boost_config.py
+│   └── token_utils.py
+├── scripts/
+│   └── eval_rulearena.py             # RuleArena evaluation script
+├── datasets/
+│   └── RuleArena/                    # Cloned benchmark repo (do not modify)
+├── results/                           # Experiment outputs
 ├── notebooks/
-│   ├── 01_basic_usage.ipynb          # Basic usage with GPT-2
-│   └── 02_gpt_oss_20b.ipynb          # Experiments with reasoning model
+│   ├── 01_basic_usage.ipynb
+│   └── 02_gpt_oss_20b.ipynb
 └── tests/
-    ├── __init__.py
-    ├── test_boost_config.py          # Configuration validation tests
-    └── test_token_utils.py           # Token utility tests
+    ├── test_boost_config.py
+    ├── test_token_utils.py
+    └── test_eval_rulearena.py
 ```
 
 ## Quick Start
@@ -244,6 +246,38 @@ Excluded patterns (projection layers): `q_proj`, `k_proj`, `v_proj`, `out_proj`,
 - Transformers >= 4.30.0
 - NumPy >= 1.24.0
 - Jupyter (for notebooks)
+
+## RuleArena Evaluation
+
+[RuleArena](https://github.com/RuleArena/RuleArena) is a benchmark for testing LLM rule-following across three domains: **airline** (baggage fee calculation), **NBA** (salary cap compliance), and **tax** (income tax computation). Each problem gives the model a long rulebook and asks it to apply the rules to a specific scenario.
+
+### Running an evaluation
+
+```bash
+python scripts/eval_rulearena.py \
+    --model openai/gpt-oss-20b \
+    --domain airline \
+    --complexity 0 \
+    --boost_strategy none        # or "uniform_rules" with --bias 2.0
+```
+
+Key flags: `--max_problems N` to limit samples, `--use_example` to include a few-shot example, `--textual` for text-only rule format (airline/tax).
+
+### Results format
+
+Each run saves to `results/rulearena/<model>/<domain>/comp_<N>/<run_id>/`:
+
+- **`samples.json`** — per-sample details (predicted/ground-truth answers, model output, timing, token counts, generation completion status)
+- **`summary.json`** — aggregate metrics (accuracy, generation-finished ratio, avg output length, wall time)
+- **`config.json`** — run configuration
+
+### Setup
+
+Clone the RuleArena benchmark into `datasets/`:
+
+```bash
+git clone https://github.com/RuleArena/RuleArena.git datasets/RuleArena
+```
 
 ## Roadmap
 
