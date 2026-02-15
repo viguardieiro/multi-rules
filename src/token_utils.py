@@ -42,7 +42,8 @@ def find_substring_token_indices(
     text: str,
     substring: str,
     tokenizer,
-    occurrence: int = 0
+    occurrence: int = 0,
+    add_special_tokens: bool = True,
 ) -> List[int]:
     """
     Find token indices corresponding to a substring within text.
@@ -51,11 +52,19 @@ def find_substring_token_indices(
     position of the substring in the text, then determining which tokens
     correspond to that character range.
 
+    Important: ``add_special_tokens`` must match the setting used when
+    tokenizing the model input, so that the returned indices align with
+    the actual token positions the model sees.
+
     Args:
         text: Full input text
         substring: Substring to find token indices for
         tokenizer: HuggingFace tokenizer instance
         occurrence: Which occurrence to find (0 = first, 1 = second, etc.)
+        add_special_tokens: Whether to include special tokens (e.g. BOS)
+            when tokenizing.  Must match the setting used for the model
+            input so that indices are consistent.  Defaults to ``True``
+            (the HuggingFace tokenizer default).
 
     Returns:
         List of absolute token indices where substring appears
@@ -105,7 +114,7 @@ def find_substring_token_indices(
 
     # Tokenize the full text and get character spans
     # HuggingFace tokenizers can return char-to-token mappings
-    encoding = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
+    encoding = tokenizer(text, add_special_tokens=add_special_tokens, return_offsets_mapping=True)
 
     offset_mapping = encoding['offset_mapping']
     token_ids = encoding['input_ids']
@@ -134,7 +143,8 @@ def create_token_subset_from_substring(
     substring: str,
     tokenizer,
     bias: float,
-    occurrence: int = 0
+    occurrence: int = 0,
+    add_special_tokens: bool = True,
 ) -> TokenSubset:
     """
     Convenience function to create a TokenSubset from a substring.
@@ -148,6 +158,9 @@ def create_token_subset_from_substring(
         tokenizer: HuggingFace tokenizer instance
         bias: Bias value to apply to these tokens
         occurrence: Which occurrence to find (0 = first, 1 = second, etc.)
+        add_special_tokens: Whether to include special tokens when
+            tokenizing.  Must match the model input tokenization.
+            Defaults to ``True``.
 
     Returns:
         TokenSubset instance with indices corresponding to the substring
@@ -156,5 +169,7 @@ def create_token_subset_from_substring(
         ValueError: If substring not found or tokenization fails
         TypeError: If inputs have wrong types
     """
-    indices = find_substring_token_indices(text, substring, tokenizer, occurrence)
+    indices = find_substring_token_indices(
+        text, substring, tokenizer, occurrence, add_special_tokens
+    )
     return TokenSubset(name=name, indices=indices, bias=bias)

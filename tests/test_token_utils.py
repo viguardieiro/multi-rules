@@ -55,8 +55,8 @@ class TestFindSubstringTokenIndices:
         assert len(indices) > 0
         assert all(isinstance(i, int) for i in indices)
 
-        # Decode to verify
-        full_tokens = tokenizer.encode(text, add_special_tokens=False)
+        # Decode to verify -- use the same add_special_tokens=True default
+        full_tokens = tokenizer.encode(text, add_special_tokens=True)
         substring_tokens = [full_tokens[i] for i in indices]
         decoded = tokenizer.decode(substring_tokens)
         assert substring.lower() in decoded.lower() or decoded.lower() in substring.lower()
@@ -89,13 +89,50 @@ class TestFindSubstringTokenIndices:
         assert len(indices) > 0
 
         # The substring should decode correctly
-        full_tokens = tokenizer.encode(text, add_special_tokens=False)
+        full_tokens = tokenizer.encode(text, add_special_tokens=True)
         substring_tokens = [full_tokens[i] for i in indices]
         decoded = tokenizer.decode(substring_tokens).strip()
 
         # Check that the key words are present
         assert "brown" in decoded.lower()
         assert "fox" in decoded.lower()
+
+    def test_indices_align_with_model_input(self, tokenizer):
+        """Test that returned indices align with tokenizer(...) output.
+
+        This is the core invariant: the indices from
+        find_substring_token_indices must match the token positions in
+        the tensor returned by ``tokenizer(text, return_tensors='pt')``,
+        which uses ``add_special_tokens=True`` by default.
+        """
+        text = "The rules are: do X, do Y, do Z. Now answer the question."
+        substring = "do X, do Y, do Z"
+
+        indices = find_substring_token_indices(text, substring, tokenizer)
+
+        # Tokenize the same way the model would
+        model_input = tokenizer(text, return_tensors="pt")
+        input_ids = model_input["input_ids"][0].tolist()
+
+        # The selected tokens should decode back to the substring
+        selected = [input_ids[i] for i in indices]
+        decoded = tokenizer.decode(selected).strip()
+        assert "do X" in decoded
+        assert "do Z" in decoded
+
+    def test_add_special_tokens_false_matches_encode(self, tokenizer):
+        """Passing add_special_tokens=False should match encode(add_special_tokens=False)."""
+        text = "Hello world, how are you?"
+        substring = "world"
+
+        indices = find_substring_token_indices(
+            text, substring, tokenizer, add_special_tokens=False
+        )
+
+        full_tokens = tokenizer.encode(text, add_special_tokens=False)
+        substring_tokens = [full_tokens[i] for i in indices]
+        decoded = tokenizer.decode(substring_tokens)
+        assert "world" in decoded.lower()
 
 
 class TestCreateTokenSubsetFromSubstring:

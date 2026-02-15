@@ -26,6 +26,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RULEARENA_DIR = PROJECT_ROOT / "datasets" / "RuleArena"
 
+# Ensure project root is on sys.path so `from src import ...` works
+# even when this script is run as a subprocess (e.g. from sweep_boost_bias.py).
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 # ---------------------------------------------------------------------------
 # System prompts & prompt templates (verbatim from each domain's auto_test.py)
 # NOTE: These are duplicated here because the auto_test.py files in each
@@ -296,6 +301,40 @@ TBD_MARK = "[__]"
 
 
 # ===================================================================
+# GPT-OSS Output Parsing
+# ===================================================================
+
+def parse_gpt_oss_output(generated_text: str) -> dict:
+    """Parse GPT-OSS-20B output into reasoning and final answer.
+
+    GPT-OSS uses channel tokens to separate reasoning from final answer:
+      <|channel|>analysis<|message|>...reasoning...<|end|>
+      <|channel|>final<|message|>...answer...<|end|>
+
+    Returns dict with keys: 'reasoning', 'final', 'raw'.
+    """
+    result = {'reasoning': None, 'final': None, 'raw': generated_text}
+
+    # Extract analysis/reasoning channel
+    analysis_match = re.search(
+        r'<\|channel\|>(?:analysis|commentary)<\|message\|>(.*?)(?:<\|end\|>|<\|channel\|>|$)',
+        generated_text, re.DOTALL
+    )
+    if analysis_match:
+        result['reasoning'] = analysis_match.group(1).strip()
+
+    # Extract final answer channel
+    final_match = re.search(
+        r'<\|channel\|>final<\|message\|>(.*?)(?:<\|end\|>|<\|return\|>|<\|channel\|>|$)',
+        generated_text, re.DOTALL
+    )
+    if final_match:
+        result['final'] = final_match.group(1).strip()
+
+    return result
+
+
+# ===================================================================
 # Problem Loading
 # ===================================================================
 
@@ -348,7 +387,7 @@ def load_reference_rules(domain: str, textual: bool = False) -> str | None:
 # Prompt Construction
 # ===================================================================
 
-def build_prompt_airline(problem: dict, reference_rules: str, use_example: bool) -> tuple[str, str]:
+def build_prompt_airline(problem: dict, reference_rules: str, use_example: bool) -> tuple[str, str, str]:
     prompt = AIRLINE_PROMPT_TEMPLATE
     prompt = prompt.replace("$reference_rules", reference_rules)
     prompt = prompt.replace("$question_prompt", problem["prompt"])
@@ -356,7 +395,7 @@ def build_prompt_airline(problem: dict, reference_rules: str, use_example: bool)
         prompt = prompt.replace("$example_prompt", AIRLINE_EXAMPLE)
     else:
         prompt = prompt.replace("$example_prompt", "")
-    return prompt, reference_rules
+    return prompt, reference_rules, problem["prompt"]
 
 
 def build_query_prompt_nba(query_dict: dict) -> str:
@@ -366,7 +405,7 @@ def build_query_prompt_nba(query_dict: dict) -> str:
     return team_info + "\n\n" + player_info + "\n\n" + operations
 
 
-def build_prompt_nba(problem: dict, reference_rules: str, use_example: bool) -> tuple[str, str]:
+def build_prompt_nba(problem: dict, reference_rules: str, use_example: bool) -> tuple[str, str, str]:
     query_prompt = build_query_prompt_nba(problem)
     prompt = NBA_PROMPT_TEMPLATE
     prompt = prompt.replace("$reference_rules", reference_rules)
@@ -375,7 +414,7 @@ def build_prompt_nba(problem: dict, reference_rules: str, use_example: bool) -> 
         prompt = prompt.replace("$example", NBA_EXAMPLE)
     else:
         prompt = prompt.replace("$example", "")
-    return prompt, reference_rules
+    return prompt, reference_rules, query_prompt
 
 
 def _import_tax_forms():
@@ -394,7 +433,7 @@ def _import_tax_forms():
     return basic_forms, basic_forms_textual, itemized_forms, self_employ_forms, edu_forms, schedule_8812
 
 
-def build_prompt_tax(problem: dict, use_example: bool, textual: bool = False) -> tuple[str, str]:
+def build_prompt_tax(problem: dict, use_example: bool, textual: bool = False) -> tuple[str, str, None]:
     (basic_forms, basic_forms_textual, itemized_forms,
      self_employ_forms, edu_forms, schedule_8812) = _import_tax_forms()
 
@@ -451,11 +490,11 @@ def build_prompt_tax(problem: dict, use_example: bool, textual: bool = False) ->
         prompt = prompt.replace("$example", "")
 
     boostable_text = forms
-    return prompt, boostable_text
+    return prompt, boostable_text, None
 
 
 def build_prompt(domain: str, problem: dict, reference_rules: str | None,
-                 use_example: bool, textual: bool = False) -> tuple[str, str]:
+                 use_example: bool, textual: bool = False) -> tuple[str, str, str | None]:
     if domain == "airline":
         return build_prompt_airline(problem, reference_rules, use_example)
     elif domain == "nba":
@@ -609,20 +648,34 @@ def eval_accuracy(domain: str, response: str, problem: dict) -> tuple[bool, obje
 # ===================================================================
 
 def build_boost_config(strategy: str, formatted_prompt: str, tokenizer,
-                       reference_rules_text: str | None, bias: float):
+                       reference_rules_text: str | None,
+                       question_text: str | None, bias: float):
     if strategy == "none" or bias == 0.0:
         return None
-
-    if reference_rules_text is None:
-        raise ValueError("Cannot boost without reference rules text")
 
     from src import BoostConfig, create_token_subset_from_substring
 
     if strategy == "uniform_rules":
+        if reference_rules_text is None:
+            raise ValueError("Cannot boost without reference rules text")
         subset = create_token_subset_from_substring(
             name="rules",
             text=formatted_prompt,
             substring=reference_rules_text,
+            tokenizer=tokenizer,
+            bias=bias,
+        )
+        return BoostConfig(subsets=[subset])
+    elif strategy == "uniform_question":
+        if question_text is None:
+            raise ValueError(
+                "uniform_question strategy requires question_text "
+                "(not supported for tax domain)"
+            )
+        subset = create_token_subset_from_substring(
+            name="question",
+            text=formatted_prompt,
+            substring=question_text,
             tokenizer=tokenizer,
             bias=bias,
         )
@@ -691,14 +744,6 @@ def extract_sample_input(domain: str, problem: dict) -> str:
         raise ValueError(f"Unknown domain: {domain}")
 
 
-def save_samples_json(results_dir: Path, samples: list[dict]) -> None:
-    """Save per-sample results as JSON Lines (one JSON object per line)."""
-    results_dir.mkdir(parents=True, exist_ok=True)
-    with open(results_dir / "samples.jsonl", "w") as f:
-        for sample in samples:
-            f.write(json.dumps(sample, cls=_NumpyEncoder) + "\n")
-
-
 class _NumpyEncoder(json.JSONEncoder):
     """Handle numpy/torch types in JSON serialization."""
     def default(self, obj):
@@ -710,11 +755,11 @@ class _NumpyEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def append_sample_jsonl(results_dir: Path, sample: dict) -> None:
-    """Append a single sample result to samples.jsonl."""
+def save_sample_json(results_dir: Path, sample: dict) -> None:
+    """Save a single sample result as results_dir/<sample_idx>.json."""
     results_dir.mkdir(parents=True, exist_ok=True)
-    with open(results_dir / "samples.jsonl", "a") as f:
-        f.write(json.dumps(sample, cls=_NumpyEncoder) + "\n")
+    with open(results_dir / f"{sample['sample_idx']}.json", "w") as f:
+        json.dump(sample, f, indent=2, cls=_NumpyEncoder)
 
 
 def save_summary_json(results_dir: Path, config_dict: dict,
@@ -730,6 +775,19 @@ def save_summary_json(results_dir: Path, config_dict: dict,
     avg_output_tokens = (
         sum(s["output_length_tokens"] for s in samples) / total if total else 0.0
     )
+
+    # Compute average reasoning and final answer lengths (only for samples that have them)
+    reasoning_samples = [s for s in samples if s.get("reasoning_length_chars") is not None]
+    final_samples = [s for s in samples if s.get("final_answer_length_chars") is not None]
+    avg_reasoning_chars = (
+        sum(s["reasoning_length_chars"] for s in reasoning_samples) / len(reasoning_samples)
+        if reasoning_samples else None
+    )
+    avg_final_answer_chars = (
+        sum(s["final_answer_length_chars"] for s in final_samples) / len(final_samples)
+        if final_samples else None
+    )
+
     summary = {
         "config": config_dict,
         "accuracy": correct / total if total else 0.0,
@@ -739,6 +797,8 @@ def save_summary_json(results_dir: Path, config_dict: dict,
         "generation_finished_ratio": finished / total if total else 0.0,
         "avg_output_length_chars": round(avg_output_chars, 1),
         "avg_output_length_tokens": round(avg_output_tokens, 1),
+        "avg_reasoning_length_chars": round(avg_reasoning_chars, 1) if avg_reasoning_chars is not None else None,
+        "avg_final_answer_length_chars": round(avg_final_answer_chars, 1) if avg_final_answer_chars is not None else None,
         "wall_time_seconds": round(wall_time_seconds, 1),
         "timestamp": datetime.now().isoformat(),
     }
@@ -757,13 +817,15 @@ def parse_args(argv=None):
     parser.add_argument("--domain", type=str, required=True, choices=["airline", "nba", "tax"])
     parser.add_argument("--complexity", type=int, default=0, choices=[0, 1, 2])
     parser.add_argument("--boost_strategy", type=str, default="none",
-                        choices=["none", "uniform_rules"])
+                        choices=["none", "uniform_rules", "uniform_question"])
     parser.add_argument("--bias", type=float, default=0.0)
     parser.add_argument("--use_example", action="store_true")
     parser.add_argument("--textual", action="store_true")
     parser.add_argument("--log_dir", type=str, default="results")
     parser.add_argument("--max_new_tokens", type=int, default=None)
     parser.add_argument("--max_problems", type=int, default=None)
+    parser.add_argument("--start_idx", type=int, default=0,
+                        help="Index of first problem to evaluate (default: 0)")
     return parser.parse_args(argv)
 
 
@@ -788,6 +850,7 @@ def main(argv=None):
         "use_example": args.use_example,
         "textual": args.textual,
         "max_new_tokens": max_new_tokens,
+        "start_idx": args.start_idx,
         "run_id": run_id,
         "timestamp": datetime.now().isoformat(),
     }
@@ -808,29 +871,26 @@ def main(argv=None):
     problems = load_problems(args.domain, args.complexity)
     reference_rules = load_reference_rules(args.domain, args.textual)
 
+    problems = problems[args.start_idx:]
     if args.max_problems is not None:
         problems = problems[:args.max_problems]
 
-    print(f"Loaded {len(problems)} problems for {args.domain} comp_{args.complexity}")
+    print(f"Loaded {len(problems)} problems for {args.domain} comp_{args.complexity}"
+          f" (start_idx={args.start_idx})")
 
     system_prompt = SYSTEM_PROMPTS[args.domain]
     correct_count = 0
     total_count = len(problems)
     sample_results = []
 
-    # Clear samples file from any previous run in same directory
-    samples_path = results_dir / "samples.jsonl"
-    samples_path.parent.mkdir(parents=True, exist_ok=True)
-    samples_path.write_text("")
-
     wall_start = time.time()
 
-    for idx, problem in enumerate(problems):
-        print(f"\n--- Problem {idx + 1}/{total_count} ---")
+    for idx, problem in enumerate(problems, start=args.start_idx):
+        print(f"\n--- Problem {idx + 1}/{total_count + args.start_idx} ---")
         sample_start = time.time()
 
         # Build prompt
-        user_prompt, boostable_text = build_prompt(
+        user_prompt, rules_text, question_text = build_prompt(
             args.domain, problem, reference_rules, args.use_example, args.textual
         )
 
@@ -840,8 +900,7 @@ def main(argv=None):
         # Build boost config
         boost_config = build_boost_config(
             args.boost_strategy, formatted_prompt, tokenizer,
-            boostable_text if args.boost_strategy != "none" else None,
-            args.bias,
+            rules_text, question_text, args.bias,
         )
 
         # Tokenize
@@ -880,7 +939,20 @@ def main(argv=None):
             or generated_tokens[-1].item() == tokenizer.eos_token_id
         )
 
-        response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        # Decode with channel markers preserved, then parse for reasoning models
+        response_raw = tokenizer.decode(generated_tokens, skip_special_tokens=False)
+        parsed = parse_gpt_oss_output(response_raw)
+
+        if parsed['final'] is not None:
+            # Model used channels — use final channel for answer extraction
+            response = parsed['final']
+            reasoning_length_chars = len(parsed['reasoning']) if parsed['reasoning'] else 0
+            final_answer_length_chars = len(parsed['final'])
+        else:
+            # Non-reasoning model — fall back to clean decode
+            response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            reasoning_length_chars = None
+            final_answer_length_chars = None
 
         # Evaluate
         is_correct, predicted, truth = eval_accuracy(args.domain, response, problem)
@@ -889,7 +961,7 @@ def main(argv=None):
 
         sample_time = time.time() - sample_start
         elapsed = time.time() - wall_start
-        done = idx + 1
+        done = idx - args.start_idx + 1
         avg_time = elapsed / done
         eta = avg_time * (total_count - done)
         eta_min, eta_sec = divmod(int(eta), 60)
@@ -906,16 +978,18 @@ def main(argv=None):
             "predicted_answer": predicted,
             "ground_truth_answer": truth,
             "is_correct": is_correct,
-            "model_output": response,
+            "model_output": response_raw,
             "generation_finished": generation_finished,
-            "output_length_chars": len(response),
+            "output_length_chars": len(response_raw),
             "input_length_tokens": int(input_length),
             "output_length_tokens": int(output_length_tokens),
+            "reasoning_length_chars": reasoning_length_chars,
+            "final_answer_length_chars": final_answer_length_chars,
             "sample_time_seconds": round(sample_time, 2),
             "boost_metadata": boost_metadata,
         }
         sample_results.append(sample)
-        append_sample_jsonl(results_dir, sample)
+        save_sample_json(results_dir, sample)
 
     wall_time = time.time() - wall_start
 
