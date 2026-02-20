@@ -173,3 +173,68 @@ def create_token_subset_from_substring(
         text, substring, tokenizer, occurrence, add_special_tokens
     )
     return TokenSubset(name=name, indices=indices, bias=bias)
+
+
+def segments_to_token_indices(
+    segments: list[dict],
+    full_prompt: str,
+    rulebook_text: str,
+    tokenizer,
+    add_special_tokens: bool = True,
+) -> list[dict]:
+    """Convert segment dicts to token index ranges.
+
+    Each segment in *segments* must have a ``substring`` key whose value
+    appears in *rulebook_text* (and, by extension, in *full_prompt*).
+
+    This function locates each substring inside *full_prompt* and calls
+    :func:`find_substring_token_indices` to obtain the matching token
+    indices.
+
+    Parameters
+    ----------
+    segments : list[dict]
+        Segment dicts as returned by
+        ``src.rulearena.rulebook_segments.get_coarse_segments`` (or fine).
+        Each must contain at least ``name`` and ``substring``.
+    full_prompt : str
+        The complete model prompt that contains the rulebook.
+    rulebook_text : str
+        The raw rulebook text, used to compute the correct occurrence
+        offset when *full_prompt* contains the rulebook exactly once.
+    tokenizer
+        A HuggingFace tokenizer instance.
+    add_special_tokens : bool
+        Must match the setting used when tokenizing the model input.
+
+    Returns
+    -------
+    list[dict]
+        A copy of each input segment dict, augmented with a
+        ``token_indices`` key (a ``list[int]``).
+    """
+    # Find where the rulebook starts inside the full prompt so that
+    # we can resolve each segment's substring unambiguously.
+    rulebook_offset = full_prompt.find(rulebook_text)
+    if rulebook_offset == -1:
+        raise ValueError("rulebook_text not found in full_prompt")
+
+    result: list[dict] = []
+    for seg in segments:
+        substring = seg["substring"]
+        # Compute the character position of this segment within full_prompt
+        char_start_in_prompt = rulebook_offset + seg["char_start"]
+        # Verify the substring matches at the expected position
+        expected = full_prompt[char_start_in_prompt:char_start_in_prompt + len(substring)]
+        if expected != substring:
+            raise ValueError(
+                f"Segment '{seg['name']}' substring does not match at expected "
+                f"position {char_start_in_prompt} in full_prompt."
+            )
+        indices = find_substring_token_indices(
+            full_prompt, substring, tokenizer,
+            add_special_tokens=add_special_tokens,
+        )
+        result.append({**seg, "token_indices": indices})
+
+    return result

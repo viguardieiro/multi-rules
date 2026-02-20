@@ -29,22 +29,35 @@ In the original paper, a single bias B is applied to all instruction tokens. Our
 
 ```
 multi-rules/
-├── src/                               # Core InstABoost implementation
-│   ├── attention_hook.py
-│   ├── boost_config.py
-│   └── token_utils.py
+├── src/                               # Core implementation
+│   ├── attention_hook.py              # Hook registration and bias application
+│   ├── boost_config.py                # Configuration dataclasses
+│   ├── token_utils.py                 # Substring-to-token-indices mapping
+│   └── rulearena/                     # RuleArena rule filtering pipeline
+│       ├── rulebook_segments.py       # Rulebook segmentation (fine/coarse)
+│       └── rule_applicability.py      # Per-problem rule selection
 ├── scripts/
-│   └── eval_rulearena.py             # RuleArena evaluation script
+│   ├── eval_rulearena.py              # RuleArena evaluation script
+│   ├── sweep_boost_bias.py            # Bias value sweep experiments
+│   ├── test_baseline_instructions.py  # Baseline instruction-following tests
+│   ├── validate_rule_applicability.py # Validate rule filtering on all samples
+│   └── rulearena/
+│       └── save_rulebook_segments.py  # Pre-compute and save rulebook segments
 ├── datasets/
-│   └── RuleArena/                    # Cloned benchmark repo (do not modify)
+│   └── RuleArena/                     # Cloned benchmark repo (do not modify)
 ├── results/                           # Experiment outputs
 ├── notebooks/
-│   ├── 01_basic_usage.ipynb
-│   └── 02_gpt_oss_20b.ipynb
+│   ├── 01_basic_usage.ipynb           # Intro with GPT-2
+│   ├── 02_gpt_oss_20b.ipynb          # Reasoning model experiments
+│   ├── boosting_comparison.ipynb      # Boosting results comparison (20b)
+│   ├── boosting_comparison_120b.ipynb # Boosting results comparison (120b)
+│   └── rulebook_filtering_comparison_120b.ipynb  # Full vs filtered rulebook comparison
 └── tests/
     ├── test_boost_config.py
     ├── test_token_utils.py
-    └── test_eval_rulearena.py
+    ├── test_eval_rulearena.py
+    ├── test_rulebook_segments.py      # Tests for rulebook segmentation
+    └── test_rule_applicability.py     # Tests for rule filtering logic
 ```
 
 ## Quick Start
@@ -239,6 +252,9 @@ Excluded patterns (projection layers): `q_proj`, `k_proj`, `v_proj`, `out_proj`,
 
 1. **`01_basic_usage.ipynb`**: Introduction with GPT-2, demonstrates basic boosting workflow
 2. **`02_gpt_oss_20b.ipynb`**: Experiments with OpenAI's reasoning model, includes bias value analysis
+3. **`boosting_comparison.ipynb`**: Compare boosted vs baseline results for gpt-oss-20b
+4. **`boosting_comparison_120b.ipynb`**: Compare boosted vs baseline results for gpt-oss-120b
+5. **`rulebook_filtering_comparison_120b.ipynb`**: Compare full rulebook vs applicable-rules-only filtering on 100 airline samples, includes per-sample inspector and LLM judge prompt generation
 
 ## Dependencies
 
@@ -254,14 +270,36 @@ Excluded patterns (projection layers): `q_proj`, `k_proj`, `v_proj`, `out_proj`,
 ### Running an evaluation
 
 ```bash
+# Standard evaluation with full rulebook
 python scripts/eval_rulearena.py \
     --model openai/gpt-oss-20b \
     --domain airline \
     --complexity 0 \
     --boost_strategy none        # or "uniform_rules" with --bias 2.0
+
+# Evaluation with rule filtering (applicable rules only)
+python scripts/eval_rulearena.py \
+    --model openai/gpt-oss-120b \
+    --domain airline \
+    --complexity 0 \
+    --rules_strategy applicable_only \
+    --drop_fee_summaries \
+    --use_example \
+    --max_problems 20
 ```
 
-Key flags: `--max_problems N` to limit samples, `--use_example` to include a few-shot example, `--textual` for text-only rule format (airline/tax).
+Key flags:
+
+| Flag | Description |
+|------|-------------|
+| `--max_problems N` | Limit number of samples to evaluate |
+| `--start_idx N` | Start from sample index N (for resuming partial runs) |
+| `--use_example` | Include a few-shot example in the prompt |
+| `--textual` | Use text-only rule format (airline/tax) |
+| `--rules_strategy` | `full` (default) or `applicable_only` — filter rulebook to relevant rules per problem |
+| `--drop_fee_summaries` | With `applicable_only`: drop generic fee summary sentences that can conflict with cabin-specific fee tables |
+| `--boost_strategy` | `none` (default) or `uniform_rules` — apply attention boosting |
+| `--bias` | Bias value when using `uniform_rules` boost strategy |
 
 ### Results format
 
@@ -270,6 +308,26 @@ Each run saves to `results/rulearena/<model>/<domain>/comp_<N>/<run_id>/`:
 - **`<idx>.json`** — one file per sample with predicted/ground-truth answers, model output, timing, token counts, and generation completion status. Written immediately after each sample completes.
 - **`summary.json`** — aggregate metrics (accuracy, generation-finished ratio, avg output length, wall time)
 - **`config.json`** — run configuration
+
+### Rule Filtering Pipeline
+
+The `--rules_strategy applicable_only` option activates a rule filtering pipeline that reduces the rulebook to only the rules relevant to each problem. This is implemented in `src/rulearena/`:
+
+1. **Rulebook segmentation** (`rulebook_segments.py`): Splits the full rulebook into fine-grained segments (individual table rows, prose paragraphs) and coarse segments (full sections). Segments are always exact substrings of the original rulebook.
+
+2. **Rule applicability** (`rule_applicability.py`): Given a problem (passenger info, items, route), determines which fine segments are needed. Structural elements (headers, table column rows) are automatically included when any row from that table is selected.
+
+3. **Filtered rulebook assembly** (`build_filtered_rulebook()`): Reconstructs a coherent rulebook from selected segments, preserving the original text ordering and filling structural gaps.
+
+Pre-compute segments for a domain:
+```bash
+python scripts/rulearena/save_rulebook_segments.py --domain airline
+```
+
+Validate rule filtering covers ground-truth answers for all samples:
+```bash
+python scripts/validate_rule_applicability.py --domain airline
+```
 
 ### Setup
 

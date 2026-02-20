@@ -819,6 +819,15 @@ def parse_args(argv=None):
     parser.add_argument("--boost_strategy", type=str, default="none",
                         choices=["none", "uniform_rules", "uniform_question"])
     parser.add_argument("--bias", type=float, default=0.0)
+    parser.add_argument("--rules_strategy", type=str, default="full",
+                        choices=["full", "applicable_only"],
+                        help="Which rules to include in the prompt: "
+                             "'full' = entire rulebook (default), "
+                             "'applicable_only' = only rules applicable to each sample")
+    parser.add_argument("--drop_fee_summaries", action="store_true",
+                        help="When using --rules_strategy applicable_only, drop the "
+                             "generic checked-bag fee summary sentences that can "
+                             "conflict with cabin-specific fee tables")
     parser.add_argument("--use_example", action="store_true")
     parser.add_argument("--textual", action="store_true")
     parser.add_argument("--log_dir", type=str, default="results")
@@ -837,6 +846,10 @@ def main(argv=None):
 
     # Generate run_id and results dir
     run_id = generate_run_id(args.boost_strategy, args.bias)
+    if args.rules_strategy == "applicable_only":
+        run_id = "applicable_rules_only"
+        if args.drop_fee_summaries:
+            run_id += "_no_fee_summaries"
     results_dir = build_results_dir(args.log_dir, args.model, args.domain,
                                     args.complexity, run_id)
 
@@ -847,6 +860,8 @@ def main(argv=None):
         "complexity": args.complexity,
         "boost_strategy": args.boost_strategy,
         "bias": args.bias,
+        "rules_strategy": args.rules_strategy,
+        "drop_fee_summaries": args.drop_fee_summaries,
         "use_example": args.use_example,
         "textual": args.textual,
         "max_new_tokens": max_new_tokens,
@@ -871,6 +886,19 @@ def main(argv=None):
     problems = load_problems(args.domain, args.complexity)
     reference_rules = load_reference_rules(args.domain, args.textual)
 
+    # Pre-compute rulebook segments for applicable_only strategy
+    _ra_fine_segments = None
+    _ra_coarse_segments = None
+    if args.rules_strategy == "applicable_only":
+        if args.domain != "airline":
+            raise ValueError("--rules_strategy applicable_only is only supported for airline domain")
+        from src.rulearena.rulebook_segments import get_fine_segments, get_coarse_segments
+        from src.rulearena.rule_applicability import build_filtered_rulebook
+        _ra_fine_segments = get_fine_segments(reference_rules)
+        _ra_coarse_segments = get_coarse_segments(reference_rules)
+        print(f"Loaded {len(_ra_fine_segments)} fine / {len(_ra_coarse_segments)} coarse segments "
+              f"for applicable_only filtering")
+
     problems = problems[args.start_idx:]
     if args.max_problems is not None:
         problems = problems[:args.max_problems]
@@ -889,9 +917,18 @@ def main(argv=None):
         print(f"\n--- Problem {idx + 1}/{total_count + args.start_idx} ---")
         sample_start = time.time()
 
+        # Build per-sample reference rules (filtered or full)
+        if args.rules_strategy == "applicable_only":
+            sample_reference_rules = build_filtered_rulebook(
+                problem["info"], reference_rules, _ra_fine_segments, _ra_coarse_segments,
+                drop_fee_summaries=args.drop_fee_summaries,
+            )
+        else:
+            sample_reference_rules = reference_rules
+
         # Build prompt
         user_prompt, rules_text, question_text = build_prompt(
-            args.domain, problem, reference_rules, args.use_example, args.textual
+            args.domain, problem, sample_reference_rules, args.use_example, args.textual
         )
 
         # Format with chat template
