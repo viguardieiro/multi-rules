@@ -29,6 +29,34 @@ class HookHandle:
     bias_mask: Optional[torch.Tensor] = None
 
 
+def find_attention_modules(model: nn.Module) -> list[tuple[str, nn.Module]]:
+    """
+    Discover attention modules in a transformer model.
+
+    Finds modules whose **last path component** matches an attention-related
+    pattern (``attn``, ``self_attn``, ``attention``).  Only the leaf name is
+    checked so that child sub-modules (e.g. ``c_attn``, ``attn_dropout``)
+    are not included.
+
+    Args:
+        model: HuggingFace transformer model
+
+    Returns:
+        List of (name, module) tuples for each attention module found.
+        Order matches ``model.named_modules()`` iteration order.
+    """
+    attention_patterns = {"attn", "self_attn", "attention"}
+    attention_modules = []
+
+    for name, module in model.named_modules():
+        # Use only the last path component so child modules don't match
+        leaf = name.split(".")[-1].lower() if name else ""
+        if leaf in attention_patterns:
+            attention_modules.append((name, module))
+
+    return attention_modules
+
+
 def create_bias_mask(
     subsets: List[TokenSubset],
     seq_length: int,
@@ -173,16 +201,7 @@ def register_boost_hooks(
             )
 
     # Find attention modules
-    attention_patterns = ["attn", "self_attn", "attention"]
-    attention_modules = []
-
-    for name, module in model.named_modules():
-        name_lower = name.lower()
-        # Match attention module patterns
-        if any(pattern in name_lower for pattern in attention_patterns):
-            # Exclude projection sub-modules
-            if not any(proj in name_lower for proj in ["q_proj", "k_proj", "v_proj", "out_proj", "o_proj", "c_proj"]):
-                attention_modules.append((name, module))
+    attention_modules = find_attention_modules(model)
 
     if not attention_modules:
         raise ValueError("No attention modules found in model")
@@ -260,16 +279,11 @@ def update_bias_mask(
     handle.bias_mask = bias_mask
 
     # Re-patch all modules with new bias mask
-    # Find attention modules again
-    attention_patterns = ["attn", "self_attn", "attention"]
-    attention_modules = []
-
-    for name, module in handle.model.named_modules():
-        name_lower = name.lower()
-        if any(pattern in name_lower for pattern in attention_patterns):
-            if not any(proj in name_lower for proj in ["q_proj", "k_proj", "v_proj", "out_proj", "o_proj", "c_proj"]):
-                if name in handle.patched_modules:  # Only re-patch what we patched before
-                    attention_modules.append((name, module))
+    all_attention_modules = find_attention_modules(handle.model)
+    attention_modules = [
+        (name, module) for name, module in all_attention_modules
+        if name in handle.patched_modules
+    ]
 
     # Re-apply patches with new bias mask
     for layer_idx, (name, module) in enumerate(attention_modules):

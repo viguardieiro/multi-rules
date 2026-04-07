@@ -1,9 +1,27 @@
-torch>=2.0.0
-transformers>=4.30.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-jupyter>=1.0.0
-pytest>=7.3.0
-accelerate>=0.20.0
-triton>=3.4.0
-kernels
+# Core ML
+torch>=2.10
+transformers>=5.2
+accelerate>=1.12
+datasets>=4.5
+
+# gpt-oss MXFP4 support (must import before transformers)
+triton>=3.6
+kernels>=0.12
+
+# Tokenizers
+sentencepiece>=0.2
+
+# Scientific computing
+numpy>=1.26
+scikit-learn>=1.8
+
+# Data & visualization
+pandas>=3.0
+matplotlib>=3.10
+seaborn>=0.13
+
+# Notebooks
+jupyter>=1.1
+
+# Testing
+pytest>=9.0

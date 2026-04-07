@@ -31,6 +31,7 @@ In the original paper, a single bias B is applied to all instruction tokens. Our
 multi-rules/
 ├── src/                               # Core implementation
 │   ├── attention_hook.py              # Hook registration and bias application
+│   ├── attention_capture.py           # Read-only attention capture per segment
 │   ├── boost_config.py                # Configuration dataclasses
 │   ├── token_utils.py                 # Substring-to-token-indices mapping
 │   └── rulearena/                     # RuleArena rule filtering pipeline
@@ -38,6 +39,7 @@ multi-rules/
 │       └── rule_applicability.py      # Per-problem rule selection
 ├── scripts/
 │   ├── eval_rulearena.py              # RuleArena evaluation script
+│   ├── analyze_rule_attention.py      # Per-segment attention analysis
 │   ├── sweep_boost_bias.py            # Bias value sweep experiments
 │   ├── test_baseline_instructions.py  # Baseline instruction-following tests
 │   ├── validate_rule_applicability.py # Validate rule filtering on all samples
@@ -56,6 +58,7 @@ multi-rules/
     ├── test_boost_config.py
     ├── test_token_utils.py
     ├── test_eval_rulearena.py
+    ├── test_attention_capture.py      # Tests for attention capture hooks
     ├── test_rulebook_segments.py      # Tests for rulebook segmentation
     └── test_rule_applicability.py     # Tests for rule filtering logic
 ```
@@ -329,6 +332,41 @@ Validate rule filtering covers ground-truth answers for all samples:
 python scripts/validate_rule_applicability.py --domain airline
 ```
 
+### Attention Analysis
+
+The `analyze_rule_attention.py` script measures how the base model naturally distributes attention across individual rule segments when solving airline problems. This reveals whether the model attends more to applicable rules, which layers contribute most, and whether attention correlates with accuracy.
+
+```bash
+python scripts/analyze_rule_attention.py \
+    --model openai/gpt-oss-120b \
+    --complexity 0 \
+    --max_problems 20 \
+    --use_example
+```
+
+Key flags:
+
+| Flag | Description |
+|------|-------------|
+| `--model` | HuggingFace model name (required) |
+| `--complexity` | Problem complexity 0/1/2 (default: 0) |
+| `--max_problems` | Number of problems to analyse (default: 20) |
+| `--start_idx` | Start from sample index N (default: 0) |
+| `--use_example` | Include few-shot example in prompt |
+| `--layers` | Comma-separated layer indices to capture (default: all) |
+| `--max_new_tokens` | Max generation tokens (default: 16000) |
+
+The model is loaded with `attn_implementation="eager"` so that softmax calls are explicit and interceptable by the capture hooks.
+
+**Output** is saved to `results/attention_analysis/<model>/airline/comp_<N>/`:
+
+- **`<idx>.json`** — per-sample metrics: segment names, applicability flags, per-segment attention, per-layer breakdown, applicable-vs-nonapplicable comparison, accuracy
+- **`<idx>_attention.npz`** — full attention cube `[num_layers, num_steps, num_segments]` for deep analysis
+- **`summary.json`** — cross-sample averages, accuracy-attention correlation
+- **`config.json`** — run parameters
+
+The core capture mechanism lives in `src/attention_capture.py`. It monkey-patches attention modules (same pattern as the boost hooks) but records post-softmax weights instead of modifying pre-softmax scores. Attention is aggregated per segment on-the-fly with zero persistent GPU memory overhead.
+
 ### Setup
 
 Clone the RuleArena benchmark into `datasets/`:
@@ -347,6 +385,7 @@ git clone https://github.com/RuleArena/RuleArena.git datasets/RuleArena
 - [x] Reasoning model support (`openai/gpt-oss-20b`)
 - [x] Basic usage notebook
 - [x] Reasoning model experiments notebook
+- [x] Attention analysis tools (`attention_capture.py`, `analyze_rule_attention.py`)
 - [ ] Visualization tools for attention patterns
 - [ ] Benchmark suite for instruction following
 - [ ] Support for dynamic bias (changing during generation)
