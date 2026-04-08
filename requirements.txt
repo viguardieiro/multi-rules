@@ -4,9 +4,9 @@ transformers>=5.2
 accelerate>=1.12
 datasets>=4.5
 
-# gpt-oss MXFP4 support (must import before transformers)
-triton>=3.6
-kernels>=0.12
+# gpt-oss MXFP4 support (Linux/NVIDIA only; unavailable on macOS)
+triton>=3.6; platform_system == "Linux"
+kernels>=0.12; platform_system == "Linux"
 
 # Tokenizers
 sentencepiece>=0.2

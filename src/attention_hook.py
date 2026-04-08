@@ -24,6 +24,7 @@ class HookHandle:
         bias_mask: Cached bias mask [seq_length]
     """
     patched_modules: dict = field(default_factory=dict)
+    patched_layer_indices: dict = field(default_factory=dict)
     config: Optional[BoostConfig] = None
     model: Optional[nn.Module] = None
     bias_mask: Optional[torch.Tensor] = None
@@ -221,6 +222,7 @@ def register_boost_hooks(
         # Save original forward
         original_forward = module.forward
         handle.patched_modules[name] = original_forward
+        handle.patched_layer_indices[name] = layer_idx
 
         # Create and apply patched forward
         module.forward = _create_patched_forward(
@@ -249,6 +251,7 @@ def unregister_boost_hooks(handle: HookHandle) -> None:
             module.forward = handle.patched_modules[name]
 
     handle.patched_modules.clear()
+    handle.patched_layer_indices.clear()
 
 
 def update_bias_mask(
@@ -286,7 +289,8 @@ def update_bias_mask(
     ]
 
     # Re-apply patches with new bias mask
-    for layer_idx, (name, module) in enumerate(attention_modules):
+    for name, module in attention_modules:
+        layer_idx = handle.patched_layer_indices[name]
         original_forward = handle.patched_modules[name]
         module.forward = _create_patched_forward(
             original_forward,
