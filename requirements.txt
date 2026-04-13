@@ -1,8 +1,9 @@
 # Core ML
-torch>=2.10
-transformers>=5.2
-accelerate>=1.12
-datasets>=4.5
+torch>=2.3
+transformers>=4.44
+accelerate>=0.30
+datasets>=2.20
+huggingface_hub>=0.24
 
 # gpt-oss MXFP4 support (Linux/NVIDIA only; unavailable on macOS)
 triton>=3.6; platform_system == "Linux"
@@ -11,17 +12,24 @@ kernels>=0.12; platform_system == "Linux"
 # Tokenizers
 sentencepiece>=0.2
 
+# IFEval checker/runtime deps
+absl-py>=2.0
+langdetect>=1.0.9
+immutabledict>=4.2
+nltk>=3.9
+requests>=2.31
+
 # Scientific computing
 numpy>=1.26
-scikit-learn>=1.8
+scikit-learn>=1.4
 
 # Data & visualization
-pandas>=3.0
-matplotlib>=3.10
+pandas>=2.2
+matplotlib>=3.8
 seaborn>=0.13
 
 # Notebooks
-jupyter>=1.1
+jupyter>=1.0
 
 # Testing
-pytest>=9.0
+pytest>=8.2
